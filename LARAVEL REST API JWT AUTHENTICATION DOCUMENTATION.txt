@@ -1,0 +1,171 @@
+Create laravel project
+composer create-project --prefer-dist laravel/laravel blog
+------------------------------------------------------------------------------------------
+Create UserController
+php artisan make:controller UserController
+------------------------------------------------------------------------------------------
+Database configuration in .env file
+------------------------------------------------------------------------------------------
+Run migration
+php artisan migrate
+------------------------------------------------------------------------------------------
+Create "register" action in UserController
+    public function register(Request $request){
+      if($request->method()=='POST'){
+         $validator=Validator::make($request->all(),User::$registerRules,User::$errorMsg);
+         if($validator->fails()){
+             return response()->json($validator->errors(),400);
+         }
+         User::create([
+           'name'=>$request->input('name'),
+           'email'=>$request->input('email'),
+           'password'=>Hash::make($request->input('password'))
+         ]);
+         return response()->json('USER REGISTERED',200);
+      }
+    }
+------------------------------------------------------------------------------------------
+Add rules in User model for registration and login
+
+    public static $registerRules=[
+      'name'=>['required','unique:users'],
+      'email'=>['required','unique:users','email'],
+      'password'=>['required','confirmed'],
+    ];
+
+    public static $loginRules=[
+        'email'=>['required','email'],
+        'password'=>['required'],
+    ];
+
+
+    public static $errorMsg=[
+      'name.required'=>'THIS NAME MUST NOT BE EMPTY',
+      'name.unique'=>'THIS NAME IS USED',
+      'email.required'=>'THIS MAIL MUST NOT BE EMPTY',
+      'email.unique'=>'THIS MAIL IS USED',
+      'password.required'=>'THIS PASSWORD MUST NOT BE EMPTY',
+      'password.confirmed'=>'PASSWORD MUST BE SAME',
+    ];	
+------------------------------------------------------------------------------------------	
+Install jwt with composer
+composer require tymon/jwt-auth
+------------------------------------------------------------------------------------------
+Add this class name in config/app.php  (in providers array)
+Tymon\JWTAuth\Providers\LaravelServiceProvider::class,
+------------------------------------------------------------------------------------------
+Run this command for adding jwt.php in config folder
+php artisan vendor:publish --provider="Tymon\JWTAuth\Providers\LaravelServiceProvider"
+------------------------------------------------------------------------------------------
+Generate secret key for jwt by this command
+php artisan jwt:secret
+------------------------------------------------------------------------------------------
+Implement JWTSubject interface to User model and add below methods
+   
+   public function getJWTIdentifier()
+    {
+        return $this->getKey();
+    }
+	
+	    public function getJWTCustomClaims()
+    {
+        return [];
+    }
+------------------------------------------------------------------------------------------
+Open config/auth.php and change default guard
+'defaults' => [
+    'guard' => 'api',
+    'passwords' => 'users',
+],
+------------------------------------------------------------------------------------------
+Change this array in config/auth.php
+
+    'api' => [
+        'driver' => 'token',
+        'provider' => 'users',
+        'hash' => false,
+    ],
+	
+TO
+
+    'api' => [
+        'driver' => 'jwt',
+        'provider' => 'users',
+        'hash' => false,
+    ],
+
+
+------------------------------------------------------------------------------------------
+Add login and refresh action in UserController
+
+    public function login(Request $request){
+        if($request->method()=='POST'){
+            $validator=Validator::make($request->all(),User::$loginRules,User::$errorMsg);
+            if($validator->fails()){
+                return response()->json($validator->errors(),400);
+            }
+            if (!$token = auth()->attempt($request->all())) {
+                return response()->json(['error' => true, 'message' => 'Incorrect Login/Password'], 401);
+            }
+            return response()->json(['token' => $token]);
+        }
+    }
+    public function refresh() {
+        try {
+            $token = auth()->refresh();
+        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
+            return response()->json(['error' => true, 'message' => $e->getMessage()], 401);
+        }
+        return response()->json(['token' => $token]);
+    }
+------------------------------------------------------------------------------------------
+Open config/jwt.php and add this class name to jwt parameters
+Tymon\JWTAuth\Providers\JWT\Namshi::class,
+------------------------------------------------------------------------------------------
+Create middleware for jwt by this command
+php artisan make:middleware JWTMiddleware
+------------------------------------------------------------------------------------------
+Change code in JWTMiddleware
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Tymon\JWTAuth\Facades\JWTAuth;
+use Exception;
+use Tymon\JWTAuth\Http\Middleware\BaseMiddleware;
+
+class JWTMiddleware extends BaseMiddleware
+{
+    /**
+     * Handle an incoming request.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \Closure  $next
+     * @return mixed
+     */
+    public function handle($request, Closure $next)
+    {
+        try {
+            $user = JWTAuth::parseToken()->authenticate();
+        } catch (Exception $e) {
+            if ($e instanceof \Tymon\JWTAuth\Exceptions\TokenInvalidException) {
+                return response()->json(['error' => true, 'message' => 'Token is Invalid']);
+            } else if ($e instanceof \Tymon\JWTAuth\Exceptions\TokenExpiredException) {
+                return response()->json(['error' => true, 'message' => 'Token is Expired']);
+            } else {
+                return response()->json(['error' => true, 'message' => 'Token not found']);
+            }
+        }
+        return $next($request);
+    }
+}
+------------------------------------------------------------------------------------------
+add this code in Kernel to $routeMiddleware array
+'jwt.verify' => \App\Http\Middleware\JWTMiddleware::class
+------------------------------------------------------------------------------------------
+add your route into this route group
+Route::group(['middleware'=>'jwt.verify'],function (){
+
+});
+------------------------------------------------------------------------------------------
